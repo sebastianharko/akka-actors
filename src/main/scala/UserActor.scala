@@ -33,8 +33,8 @@ class UserMgmtActor extends Actor with ActorLogging {
 
   def receive = {
     case CreateUser => {
-      val userId = java.
-      context.system.actorOf(UserActor.props())
+      val userId = java.util.UUID.randomUUID().toString.take(4)
+      context.actorOf(UserActor.props(userId), "user-" + userId)
     }
   }
 
@@ -71,13 +71,14 @@ class UserActor(userId: String) extends PersistentActor with ActorLogging {
   override def persistenceId: String = userId
 
   override def preStart = {
-    log.info(s"created user actor for user with id $userId")
+    log.info(s"I'm the user actor for user with id $userId !")
   }
 
   def updateState(event: Event) = {
     event match {
       case PasswordChanged(someUserId, newPassword) if someUserId == userId => {
         password = newPassword
+        log.info("Set password to " + newPassword)
       }
     }
   }
@@ -86,8 +87,6 @@ class UserActor(userId: String) extends PersistentActor with ActorLogging {
     case evt: Event =>
       updateState(evt)
   }
-
-
 
   override def receiveCommand: Receive = {
 

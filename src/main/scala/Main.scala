@@ -81,6 +81,7 @@ object Main extends App {
   }
 
   system.actorOf(Props(new UserObserverActor), "user-observer")
+  val userMgmt = system.actorOf(Props(new UserMgmtActor), "user-group")
 
   val reader = new ConsoleReader()
   reader.setPrompt("system> ")
@@ -90,14 +91,13 @@ object Main extends App {
     val line: String = reader.readLine()
     line match {
       case "create user" =>
-        val userId = java.util.UUID.randomUUID().toString
-        val actorRef = system.actorOf(UserActor.props(userId), s"user-$userId")
+        userMgmt ! UserMgmtActor.Messages.Commands.CreateUser
       case setPasswordMessage:String if setPasswordMessage.startsWith("set user password ") =>
         val r = setPasswordMessage.replaceAll("set user password ", "").split(" ").toList
         if (r.size == 2) {
           val userId = r.head
           val newPassword = r.last
-          system.actorSelection("/user/user-" + userId).resolveOne().onComplete {
+          system.actorSelection("/user/user-group/user-" + userId).resolveOne().onComplete {
             case Success(someUserActor: ActorRef) =>
               someUserActor ! SetPassword(newPassword)
             case Failure(_) =>
@@ -108,7 +108,7 @@ object Main extends App {
         val r = failUserMessage.split(" ").toList
         if (r.size == 2) {
           val userId = r.last
-          system.actorSelection("/user/user-" + userId).resolveOne().onComplete {
+          system.actorSelection("/user/user-group/user-" + userId).resolveOne().onComplete {
             case Success(someUserActor: ActorRef) =>
               someUserActor ! UserActor.Messages.Commands.Fail
             case Failure(_) =>

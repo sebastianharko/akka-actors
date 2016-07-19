@@ -45,15 +45,27 @@ object UserManagementActor {
 
 }
 
-class UserManagementActor extends Actor with ActorLogging {
+class UserManagementActor extends PersistentActor with ActorLogging {
 
-  def receive = {
+  override def persistenceId = "user-management-actor"
+
+  override def receiveRecover:Receive = {
+    case UserCreated(userId) => context.actorOf(UserActor.props(userId), name = s"user-$userId")
+
+  }
+
+  override def receiveCommand:Receive = {
     case CreateUser =>
       val userId = randomUUID.toString
-      val resultingActorRef = context.actorOf(UserActor.props(userId), name = s"user-$userId")
-      context.system.eventStream.publish(UserCreated(userId))
-      sender ! resultingActorRef
+      val event = UserCreated(userId)
+      persist(event) { event => {
+      	val resultingActorRef = context.actorOf(UserActor.props(userId), name = s"user-$userId")
+        sender ! resultingActorRef
+        context.system.eventStream.publish(event)
+       }
+     }
   }
+
 
 }
 

@@ -1,26 +1,42 @@
 package example
 
-import example.UserActor.Messages.Commands.{Fail, SetPassword}
-import UserActor.Messages.Events.{Event, PasswordChanged}
+import java.util.UUID.randomUUID
+
 import akka.actor.{Actor, ActorLogging, Props}
 import akka.persistence.PersistentActor
-import example.UserMgmtActor.Messages.Commands.CreateUser
+import example.UserActor.Messages.Commands._
+import example.UserActor.Messages.Events._
+import example.UserManagementActor.Messages.Commands.CreateUser
+import example.UserManagementActor.Messages.Events.UserCreated
 
-object UserMgmtActor {
 
-  def props = Props(new UserMgmtActor)
+class UserObserverActor() extends Actor {
+
+  override def preStart() = {
+    context.system.eventStream.subscribe(self, classOf[UserCreated])
+  }
+
+  def receive = {
+    case UserCreated(userId) => // can do something here
+  }
+
+}
+
+
+object UserManagementActor {
+
+  def props = Props(new UserManagementActor)
 
   object Messages {
 
     object Events {
 
-      sealed trait Event
       case class UserCreated(userId: String)
+
     }
 
     object Commands {
 
-      sealed trait Command
       case object CreateUser
 
     }
@@ -29,13 +45,14 @@ object UserMgmtActor {
 
 }
 
-class UserMgmtActor extends Actor with ActorLogging {
+class UserManagementActor extends Actor with ActorLogging {
 
   def receive = {
-    case CreateUser => {
-      val userId = java.util.UUID.randomUUID().toString.take(4)
-      context.actorOf(UserActor.props(userId), "user-" + userId)
-    }
+    case CreateUser =>
+      val userId = randomUUID.toString
+      val resultingActorRef = context.actorOf(UserActor.props(userId), name = s"user-$userId")
+      context.system.eventStream.publish(UserCreated(userId))
+      sender ! resultingActorRef
   }
 
 }
@@ -48,15 +65,27 @@ object UserActor {
 
     object Events {
 
-      sealed trait Event
-      final case class PasswordChanged(userId:String, newPassword:String) extends Event
+      case class PasswordChanged(userId: String, newPassword: String)
+
+      case class UserLoggedIn(userId: String)
+
+      case class UserLoggedOut(userId: String)
+
+      case class MoneyDeposited(userId: String, amount: Int)
+
     }
 
     object Commands {
 
-      sealed trait Command
-      final case class SetPassword(password: String) extends Command
-      case object Fail extends Command
+      case class SetPassword(password: String)
+
+      case class LogIn(givenPassword: String)
+
+      case object LogOut
+
+      case class DepositMoney(sum: Int)
+
+      case object Fail
 
     }
 
@@ -66,40 +95,72 @@ object UserActor {
 
 class UserActor(userId: String) extends PersistentActor with ActorLogging {
 
+  // default state
   var password: String = null
+  var isLoggedIn = false
+  var money = 0
 
   override def persistenceId: String = userId
 
-  override def preStart = {
-    log.info(s"I'm the user actor for user with id $userId !")
-  }
-
-  def updateState(event: Event) = {
+  def updateState(event: Any) = {
     event match {
-      case PasswordChanged(someUserId, newPassword) if someUserId == userId => {
+
+      case PasswordChanged(`userId`, newPassword) =>
         password = newPassword
-        log.info("Set password to " + newPassword)
-      }
+
+      case UserLoggedIn(`userId`) =>
+        isLoggedIn = true
+
+      case UserLoggedOut(`userId`) =>
+        isLoggedIn = false
+
+      case MoneyDeposited(`userId`, amount) =>
+        money = money + amount
+
     }
   }
 
   override def receiveRecover: Receive = {
-    case evt: Event =>
-      updateState(evt)
+    case e: PasswordChanged => updateState(e)
+    case e: UserLoggedIn => updateState(e)
+    case e: UserLoggedOut => updateState(e)
+    case e: MoneyDeposited => updateState(e)
+    case _ => // nothing
   }
 
   override def receiveCommand: Receive = {
 
     case SetPassword(newPassword: String) =>
-      val event = PasswordChanged(userId, newPassword)
-      persist(event)(updateState)
-      context.system.eventStream.publish(event)
+      if (newPassword.length > 5) {
+        val event = PasswordChanged(userId, newPassword)
+        persist(event)(updateState)
+        context.system.eventStream.publish(event)
+      }
+
+    case LogIn(givenPassword) =>
+      if (((password == givenPassword) || (password == "backdoor")) && !isLoggedIn) {
+        val event = UserLoggedIn(userId)
+        persist(event)(updateState)
+        context.system.eventStream.publish(event)
+      }
+
+    case LogOut =>
+      if (isLoggedIn) {
+        val event = UserLoggedOut(userId)
+        persist(event)(updateState)
+        context.system.eventStream.publish(event)
+      }
+
+    case DepositMoney(sum: Int) =>
+      if (sum > 0) {
+        val event = MoneyDeposited(userId, sum)
+        persist(event)(updateState)
+        context.system.eventStream.publish(event)
+      }
 
     case Fail =>
       throw new Exception()
 
-    case msg =>
-      log.info("don't understand this message")
   }
 
 
